@@ -47,6 +47,8 @@ import java.util.List;
  */
 public interface TradingApi {
 
+    enum HttpMethod {GET,PUT,POST}
+
     /**
      * Returns the current version of the API.
      *
