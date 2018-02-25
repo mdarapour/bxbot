@@ -21,9 +21,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
-import static org.easymock.EasyMock.anyObject;
-import static org.easymock.EasyMock.eq;
-import static org.easymock.EasyMock.expect;
+import static org.easymock.EasyMock.*;
 import static org.junit.Assert.*;
 
 /**
@@ -37,7 +35,7 @@ import static org.junit.Assert.*;
 public class TestBtcMarketsExchangeAdapter {
 
     // Canned JSON responses from exchange - expected to reside on filesystem relative to project root
-    private static final String ORDERBOOK_JSON_RESPONSE = "./src/test/exchange-data/btcmarkets/orderbook.json";
+    private static final String ORDERBOOK_JSON_RESPONSE = "bxbot-exchanges/src/test/exchange-data/btcmarkets/orderbook.json";
     private static final String USERINFO_JSON_RESPONSE = "./src/test/exchange-data/okcoin/userinfo.json";
     private static final String USERINFO_ERROR_JSON_RESPONSE = "./src/test/exchange-data/okcoin/userinfo-error.json";
     private static final String TICKER_JSON_RESPONSE = "./src/test/exchange-data/okcoin/ticker.json";
@@ -170,9 +168,11 @@ public class TestBtcMarketsExchangeAdapter {
     public void testGettingMarketOrdersHandlesExchangeNetworkException() throws Exception {
 
         // Partial mock so we do not send stuff down the wire
-        final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(
-                BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
+        final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
+                anyObject(TradingApi.HttpMethod.class),
+                anyString(),
+                anyString(),
                 anyObject(Map.class)).
                 andThrow(new ExchangeNetworkException("All we have to decide is what to do with the time that is given" +
                         " to us."));
@@ -191,6 +191,9 @@ public class TestBtcMarketsExchangeAdapter {
         final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(
                 BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
+                anyObject(TradingApi.HttpMethod.class),
+                anyString(),
+                anyString(),
                 anyObject(Map.class)).
                 andThrow(new IllegalArgumentException("The board is set, the pieces are moving. We come to it at last, " +
                         "the great battle of our time."));
