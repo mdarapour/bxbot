@@ -34,7 +34,7 @@ import static org.junit.Assert.*;
 @RunWith(PowerMockRunner.class)
 @PowerMockIgnore({"javax.crypto.*", "javax.management.*"})
 @PrepareForTest(BtcMarketsExchangeAdapter.class)
-public class BtcMarketsExchangeAdapterTest {
+public class TestBtcMarketsExchangeAdapter {
 
     // Canned JSON responses from exchange - expected to reside on filesystem relative to project root
     private static final String ORDERBOOK_JSON_RESPONSE = "./src/test/exchange-data/btcmarkets/orderbook.json";
