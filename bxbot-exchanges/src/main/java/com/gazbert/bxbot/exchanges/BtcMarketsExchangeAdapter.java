@@ -215,6 +215,10 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
             return name().substring(4);
         }
 
+        public String getInstrument() {
+            return name().replace("_", "/");
+        }
+
         public static MarketConfig configOf(String marketId) {
             Optional<MarketConfig> marketConfig = Arrays.stream(MarketConfig.values()).filter((m) -> m.marketId.equals(marketId)).findFirst();
             if(marketConfig.isPresent()) {
@@ -245,11 +249,8 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
     public MarketOrderBook getMarketOrders(String marketId) throws ExchangeNetworkException, TradingApiException {
         try {
 
-            final Map<String, String> params = createRequestParamMap();
-            params.put("symbol", marketId);
-
-            final String apiMethod = ApiMethod.ORDERBOOK.getMethod(MarketConfig.valueOf(marketId).name());
-            final ExchangeHttpResponse response = sendPublicRequestToExchange(HttpMethod.GET, apiMethod, null, params)    ;
+            final String apiMethod = ApiMethod.ORDERBOOK.getMethod(MarketConfig.configOf(marketId).getInstrument());
+            final ExchangeHttpResponse response = sendPublicRequestToExchange(HttpMethod.GET, apiMethod, null, null)    ;
             LOG.debug(() -> "Market Orders response: " + response);
 
             final BtcMarketsOrderbook orderBook = gson.fromJson(response.getPayload(), BtcMarketsOrderbook.class);
@@ -327,7 +328,8 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
             createOrderRequest.price = price;
             createOrderRequest.volume = quantity;
 
-            final ExchangeHttpResponse response = sendPublicRequestToExchange(HttpMethod.POST, ApiMethod.CREATE_ORDER.getMethod(marketId), gson.toJson(createOrderRequest), null);
+            String apiMethod = ApiMethod.CREATE_ORDER.getMethod(MarketConfig.configOf(marketId).getInstrument());
+            final ExchangeHttpResponse response = sendPublicRequestToExchange(HttpMethod.POST, apiMethod, gson.toJson(createOrderRequest), null);
             LOG.debug(() -> "Create Order response: " + response);
 
             final BtcMarketTradeResponse createOrderResponse = gson.fromJson(response.getPayload(), BtcMarketTradeResponse.class);
@@ -353,7 +355,8 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
 
             BtcMarketsCancelOrderRequest cancelOrderRequest = new BtcMarketsCancelOrderRequest(Lists.newArrayList(orderId));
 
-            final ExchangeHttpResponse response = sendPublicRequestToExchange(HttpMethod.POST, ApiMethod.CANCEL_ORDER.getMethod(marketId), gson.toJson(cancelOrderRequest), null);
+            String apiMethod = ApiMethod.CANCEL_ORDER.getMethod(MarketConfig.configOf(marketId).getInstrument());
+            final ExchangeHttpResponse response = sendPublicRequestToExchange(HttpMethod.POST, apiMethod, gson.toJson(cancelOrderRequest), null);
             LOG.debug(() -> "Cancel Order response: " + response);
 
             final BtcMarketsCancelOrderResponses cancelOrderResponse = gson.fromJson(response.getPayload(), BtcMarketsCancelOrderResponses.class);
@@ -376,10 +379,8 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
     @Override
     public BigDecimal getLatestMarketPrice(String marketId) throws ExchangeNetworkException, TradingApiException {
         try {
-            final Map<String, String> params = createRequestParamMap();
-            params.put("symbol", marketId);
-
-            final ExchangeHttpResponse response = sendPublicRequestToExchange(HttpMethod.GET, ApiMethod.TICK.getMethod(marketId), null, params);
+            String apiMethod = ApiMethod.TICK.getMethod(MarketConfig.configOf(marketId).getInstrument());
+            final ExchangeHttpResponse response = sendPublicRequestToExchange(HttpMethod.GET, apiMethod, null, null);
             LOG.debug(() -> "Latest Market Price response: " + response);
 
             final BtcMarketsTick tick = gson.fromJson(response.getPayload(), BtcMarketsTick.class);
@@ -406,6 +407,33 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
     @Override
     public BigDecimal getPercentageOfSellOrderTakenForExchangeFee(String marketId) throws TradingApiException, ExchangeNetworkException {
         return null;
+    }
+
+    @Override
+    public Ticker getTicker(String marketId) throws TradingApiException, ExchangeNetworkException {
+        try {
+            String apiMethod = ApiMethod.TICK.getMethod(MarketConfig.configOf(marketId).getInstrument());
+            final ExchangeHttpResponse response = sendPublicRequestToExchange(HttpMethod.GET, apiMethod, null, null);
+            LOG.debug(() -> "Latest Market Price response: " + response);
+
+            final BtcMarketsTick tick = gson.fromJson(response.getPayload(), BtcMarketsTick.class);
+            return new TickerImpl(
+                    tick.lastPrice,
+                    tick.bestBid,
+                    tick.bestAsk,
+                    null, // low not supplied by BtcMarkets
+                    null, // high not supplied by BtcMarkets
+                    null, // open not supplied by BtcMarkets
+                    tick.volume24h,
+                    null, // vwap not supplied by BtcMarkets
+                    tick.timestamp);
+
+        } catch (ExchangeNetworkException | TradingApiException e) {
+            throw e;
+        } catch (Exception e) {
+            LOG.error(UNEXPECTED_ERROR_MSG, e);
+            throw new TradingApiException(UNEXPECTED_ERROR_MSG, e);
+        }
     }
 
     // ------------------------------------------------------------------------------------------------
@@ -740,34 +768,5 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
     private ExchangeHttpResponse makeNetworkRequest(URL url, String httpMethod, String postData, Map<String, String> requestHeaders)
             throws TradingApiException, ExchangeNetworkException {
         return super.sendNetworkRequest(url, httpMethod, postData, requestHeaders);
-    }
-
-    @Override
-    public Ticker getTicker(String marketId) throws TradingApiException, ExchangeNetworkException {
-        try {
-            final Map<String, String> params = createRequestParamMap();
-            params.put("symbol", marketId);
-
-            final ExchangeHttpResponse response = sendPublicRequestToExchange(HttpMethod.GET, ApiMethod.TICK.getMethod(marketId), null, params);
-            LOG.debug(() -> "Latest Market Price response: " + response);
-
-            final BtcMarketsTick tick = gson.fromJson(response.getPayload(), BtcMarketsTick.class);
-            return new TickerImpl(
-                    tick.lastPrice,
-                    tick.bestBid,
-                    tick.bestAsk,
-                    null, // low not supplied by BtcMarkets
-                    null, // high not supplied by BtcMarkets
-                    null, // open not supplied by BtcMarkets
-                    tick.volume24h,
-                    null, // vwap not supplied by BtcMarkets
-                    tick.timestamp);
-
-        } catch (ExchangeNetworkException | TradingApiException e) {
-            throw e;
-        } catch (Exception e) {
-            LOG.error(UNEXPECTED_ERROR_MSG, e);
-            throw new TradingApiException(UNEXPECTED_ERROR_MSG, e);
-        }
     }
 }

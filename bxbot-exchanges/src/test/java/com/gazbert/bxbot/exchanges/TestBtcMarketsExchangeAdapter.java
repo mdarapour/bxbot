@@ -267,16 +267,16 @@ public class TestBtcMarketsExchangeAdapter {
 
         // Mock out postData so we can assert the contents passed to the transport layer are what we expect.
         final BtcMarketsExchangeAdapter.BtcMarketsCreateOrderRequest createOrderRequest = new BtcMarketsExchangeAdapter.BtcMarketsCreateOrderRequest();
-        createOrderRequest.volume = BUY_ORDER_QUANTITY;
-        createOrderRequest.price = BUY_ORDER_PRICE;
+        createOrderRequest.volume = SELL_ORDER_QUANTITY;
+        createOrderRequest.price = SELL_ORDER_PRICE;
         createOrderRequest.instrument = BtcMarketsExchangeAdapter.MarketConfig.configOf(MARKET_ID).getBaseCurrency();
         createOrderRequest.currency = BtcMarketsExchangeAdapter.MarketConfig.configOf(MARKET_ID).getCounterCurrency();
         createOrderRequest.ordertype = "Market";
         createOrderRequest.orderSide = "Ask";
 
         // Partial mock so we do not send stuff down the wire
-        final OkCoinExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(
-                OkCoinExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
+        final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(
+                BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
 
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
                 eq(TradingApi.HttpMethod.POST),
@@ -376,21 +376,15 @@ public class TestBtcMarketsExchangeAdapter {
         final AbstractExchangeAdapter.ExchangeHttpResponse exchangeResponse =
                 new AbstractExchangeAdapter.ExchangeHttpResponse(200, "OK", new String(encoded, StandardCharsets.UTF_8));
 
-        // Mock out param map so we can assert the contents passed to the transport layer are what we expect.
-        final Map<String, String> requestParamMap = PowerMock.createMock(Map.class);
-        expect(requestParamMap.put("symbol", MARKET_ID)).andStubReturn(null);
-
         // Partial mock so we do not send stuff down the wire
         final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(
-                BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
-                MOCKED_CREATE_REQUEST_PARAM_MAP_METHOD);
+                BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
 
-        PowerMock.expectPrivate(exchangeAdapter, MOCKED_CREATE_REQUEST_PARAM_MAP_METHOD).andReturn(requestParamMap);
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
                 eq(TradingApi.HttpMethod.GET),
                 eq(ORDERBOOK),
                 eq(null),
-                eq(requestParamMap)).andReturn(exchangeResponse);
+                eq(null)).andReturn(exchangeResponse);
 
         PowerMock.replayAll();
         exchangeAdapter.init(exchangeConfig);
@@ -478,21 +472,15 @@ public class TestBtcMarketsExchangeAdapter {
         final AbstractExchangeAdapter.ExchangeHttpResponse exchangeResponse =
                 new AbstractExchangeAdapter.ExchangeHttpResponse(200, "OK", new String(encoded, StandardCharsets.UTF_8));
 
-        // Mock out param map so we can assert the contents passed to the transport layer are what we expect.
-        final Map<String, String> requestParamMap = PowerMock.createMock(Map.class);
-        expect(requestParamMap.put("symbol", MARKET_ID)).andStubReturn(null);
-
         // Partial mock so we do not send stuff down the wire
         final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(
-                BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
-                MOCKED_CREATE_REQUEST_PARAM_MAP_METHOD);
+                BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
 
-        PowerMock.expectPrivate(exchangeAdapter, MOCKED_CREATE_REQUEST_PARAM_MAP_METHOD).andReturn(requestParamMap);
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
                 eq(TradingApi.HttpMethod.GET),
                 eq(TICK),
                 eq(null),
-                eq(requestParamMap)).andReturn(exchangeResponse);
+                eq(null)).andReturn(exchangeResponse);
 
         PowerMock.replayAll();
         exchangeAdapter.init(exchangeConfig);
@@ -560,21 +548,15 @@ public class TestBtcMarketsExchangeAdapter {
         final AbstractExchangeAdapter.ExchangeHttpResponse exchangeResponse =
                 new AbstractExchangeAdapter.ExchangeHttpResponse(200, "OK", new String(encoded, StandardCharsets.UTF_8));
 
-        // Mock out param map so we can assert the contents passed to the transport layer are what we expect.
-        final Map<String, String> requestParamMap = PowerMock.createMock(Map.class);
-        expect(requestParamMap.put("symbol", MARKET_ID)).andStubReturn(null);
-
         // Partial mock so we do not send stuff down the wire
         final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(
-                BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
-                MOCKED_CREATE_REQUEST_PARAM_MAP_METHOD);
+                BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
 
-        PowerMock.expectPrivate(exchangeAdapter, MOCKED_CREATE_REQUEST_PARAM_MAP_METHOD).andReturn(requestParamMap);
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
                 eq(TradingApi.HttpMethod.GET),
                 eq(TICK),
                 eq(null),
-                eq(requestParamMap)).andReturn(exchangeResponse);
+                eq(null)).andReturn(exchangeResponse);
 
         PowerMock.replayAll();
         exchangeAdapter.init(exchangeConfig);
