@@ -6,6 +6,7 @@ import com.gazbert.bxbot.exchange.api.ExchangeConfig;
 import com.gazbert.bxbot.exchange.api.OptionalConfig;
 import com.gazbert.bxbot.exchanges.trading.api.impl.MarketOrderBookImpl;
 import com.gazbert.bxbot.exchanges.trading.api.impl.MarketOrderImpl;
+import com.gazbert.bxbot.exchanges.trading.api.impl.OpenOrderImpl;
 import com.gazbert.bxbot.exchanges.trading.api.impl.TickerImpl;
 import com.gazbert.bxbot.trading.api.*;
 import com.google.common.base.MoreObjects;
@@ -15,6 +16,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.logging.log4j.core.util.SystemClock;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -27,6 +29,9 @@ import java.security.InvalidKeyException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.text.DecimalFormat;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.function.BinaryOperator;
 
@@ -89,6 +94,16 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
     private static final String ORDER_TYPE_PROPERTY_NAME = "order-type";
 
     /**
+     * Name of orders limit property in config file.
+     */
+    private static final String ORDERS_LIMIT_PROPERTY_NAME = "orders-limit";
+
+    /**
+     * Name of orders since property in config file.
+     */
+    private static final String ORDERS_SINCE_PROPERTY_NAME = "orders-since";
+
+    /**
      * Encryption algorithm used for signing requests
      */
     private static final String ALGORITHM = "HmacSHA512";
@@ -127,6 +142,16 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
      * Default order type
      */
     private String orderType;
+
+    /**
+     * Default orders limit
+     */
+    private int ordersLimit;
+
+    /**
+     * calculated timestamp based on {@link #ORDERS_SINCE_PROPERTY_NAME}
+     */
+    private long ordersSince;
 
     /**
      * Used to indicate if we have initialised the authentication and secure messaging layer.
@@ -171,6 +196,7 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
         CREATE_ORDER("/order/create"),
         CANCEL_ORDER("/order/cancel"),
         ORDERBOOK("/market/%s/orderbook"),
+        OPEN_ORDERS("/order/open"),
         TICK("/market/%s/tick");
 
         ApiMethod(String context) {
@@ -299,7 +325,62 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
 
     @Override
     public List<OpenOrder> getYourOpenOrders(String marketId) throws ExchangeNetworkException, TradingApiException {
-        return null;
+        try {
+            final String apiMethod = ApiMethod.OPEN_ORDERS.getMethod(MarketConfig.configOf(marketId).getInstrument());
+            final BtcMarketsOpenOrdersRequest openOrdersRequest = new BtcMarketsOpenOrdersRequest();
+            openOrdersRequest.currency =  MarketConfig.configOf(marketId).getCounterCurrency();
+            openOrdersRequest.instrument = MarketConfig.configOf(marketId).getBaseCurrency();
+            openOrdersRequest.limit = ordersLimit;
+            openOrdersRequest.since = ordersSince;
+
+            final ExchangeHttpResponse response = sendPublicRequestToExchange(HttpMethod.POST, apiMethod, gson.toJson(openOrdersRequest), null);
+            LOG.debug(() -> "Open Orders response: " + response);
+
+            final BtcMarketsOrdersWrapper openOrders = gson.fromJson(response.getPayload(), BtcMarketsOrdersWrapper.class);
+            if (openOrders.success) {
+
+                final List<OpenOrder> ordersToReturn = new ArrayList<>();
+                for (final BtcMarketsOrder openOrder : openOrders.orders) {
+                    OrderType orderType;
+                    switch (openOrder.orderSide) {
+                        case "Bid":
+                            orderType = OrderType.BUY;
+                            break;
+                        case "Ask":
+                            orderType = OrderType.SELL;
+                            break;
+                        default:
+                            throw new TradingApiException(
+                                    "Unrecognised order type received in getYourOpenOrders(). Value: " + openOrder.orderSide);
+                    }
+
+                    final OpenOrder order = new OpenOrderImpl(
+                            String.valueOf(openOrder.id),
+                            new Date(openOrder.creationTime),
+                            marketId,
+                            orderType,
+                            openOrder.price,
+                            openOrder.volume,
+                            openOrder.openVolume,
+                            openOrder.price.multiply(openOrder.volume) // total - not provided by BtcMarkets :-(
+                    );
+
+                    ordersToReturn.add(order);
+                }
+                return ordersToReturn;
+
+            } else {
+                final String errorMsg = "Failed to get Open Order Info from exchange. Error response: " + response;
+                LOG.error(errorMsg);
+                throw new TradingApiException(errorMsg);
+            }
+
+        } catch (ExchangeNetworkException | TradingApiException e) {
+            throw e;
+        } catch (Exception e) {
+            LOG.error(UNEXPECTED_ERROR_MSG, e);
+            throw new TradingApiException(UNEXPECTED_ERROR_MSG, e);
+        }
     }
 
     @Override
@@ -440,6 +521,19 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
     //  GSON classes for JSON requests.
     // ------------------------------------------------------------------------------------------------
 
+    public static class BtcMarketsBaseRequest {
+        public String currency;
+        public String instrument;
+
+        @Override
+        public String toString() {
+            return MoreObjects.toStringHelper(this)
+                    .add("currency", currency)
+                    .add("instrument", instrument)
+                    .toString();
+        }
+    }
+
     public static class BtcMarketsCancelOrderRequest {
         public ArrayList<String> orderIds;
 
@@ -455,9 +549,7 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
         }
     }
 
-    public static class BtcMarketsCreateOrderRequest {
-        public String currency;
-        public String instrument;
+    public static class BtcMarketsCreateOrderRequest extends BtcMarketsBaseRequest {
         public BigDecimal price;
         public BigDecimal volume;
         public String orderSide;
@@ -467,13 +559,24 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
         @Override
         public String toString() {
             return MoreObjects.toStringHelper(this)
-                    .add("currency", currency)
-                    .add("instrument", instrument)
                     .add("price", price)
                     .add("volume", volume)
                     .add("orderSide", orderSide)
                     .add("ordertype", ordertype)
                     .add("clientRequestId", clientRequestId)
+                    .toString();
+        }
+    }
+
+    public static class BtcMarketsOpenOrdersRequest extends BtcMarketsBaseRequest {
+        public int limit;
+        public long since;
+
+        @Override
+        public String toString() {
+            return MoreObjects.toStringHelper(this)
+                    .add("limit", limit)
+                    .add("since", since)
                     .toString();
         }
     }
@@ -502,9 +605,9 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
     }
 
     /**
-     * GSON class for wrapping '/order/cancel' response.
+     * GSON base class for response.
      */
-    public static class BtcMarketsCancelOrderResponse extends BtcMarketsMessageBase {
+    public static class BtcMarketsEntityResponse extends BtcMarketsMessageBase {
 
         public String id;
 
@@ -514,6 +617,13 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
                     .add("id", id)
                     .toString();
         }
+    }
+
+    /**
+     * GSON class for wrapping '/order/cancel' response.
+     */
+    public static class BtcMarketsCancelOrderResponse extends BtcMarketsEntityResponse {
+
     }
 
     public static class BtcMarketsCancelOrderResponses extends BtcMarketsMessageBase {
@@ -540,6 +650,74 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
             return MoreObjects.toStringHelper(this)
                     .add("id", id)
                     .add("clientRequestId", clientRequestId)
+                    .toString();
+        }
+    }
+
+    /**
+     * GSON wrapper class for '/order/open`
+     */
+    public static class BtcMarketsOrdersWrapper extends BtcMarketsMessageBase {
+        public ArrayList<BtcMarketsOrder> orders;
+
+        @Override
+        public String toString() {
+            return MoreObjects.toStringHelper(this)
+                    .add("orders", orders)
+                    .toString();
+        }
+    }
+
+    /**
+     * GSON class for Open Order
+     */
+    public static class BtcMarketsOrder extends BtcMarketTradeResponse {
+        public String currency;
+        public String instrument;
+        public String orderSide;
+        public String orderType;
+        public long creationTime;
+        public String status;
+        public BigDecimal price;
+        public BigDecimal volume;
+        public BigDecimal openVolume;
+        public ArrayList<BtcMarketsTrade> trades;
+
+        @Override
+        public String toString() {
+            return MoreObjects.toStringHelper(this)
+                    .add("currency", currency)
+                    .add("instrument", instrument)
+                    .add("orderSide", orderSide)
+                    .add("orderType", orderType)
+                    .add("creationTime", creationTime)
+                    .add("status", status)
+                    .add("price", price)
+                    .add("volume", volume)
+                    .add("openVolume", openVolume)
+                    .add("trades", trades)
+                    .toString();
+        }
+    }
+
+    /**
+     * GSON class for trade
+     */
+    public static class BtcMarketsTrade extends BtcMarketsEntityResponse {
+        public long creationTime;
+        public String description;
+        public BigDecimal price;
+        public BigDecimal volume;
+        public BigDecimal fee;
+
+        @Override
+        public String toString() {
+            return MoreObjects.toStringHelper(this)
+                    .add("creationTime", creationTime)
+                    .add("description", description)
+                    .add("price", price)
+                    .add("volume", volume)
+                    .add("fee", fee)
                     .toString();
         }
     }
@@ -734,6 +912,10 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
         LOG.info(() -> "Sell fee % in BigDecimal format: " + sellFeePercentage);
 
         orderType = getOptionalConfigItem(optionalConfig, ORDER_TYPE_PROPERTY_NAME);
+        ordersLimit = new Integer(getOptionalConfigItem(optionalConfig, ORDERS_LIMIT_PROPERTY_NAME));
+
+        final long hours = Integer.parseInt(getOptionalConfigItem(optionalConfig, ORDERS_SINCE_PROPERTY_NAME));
+        ordersSince = Instant.now(createClock()).minus(hours, ChronoUnit.HOURS).toEpochMilli();
     }
 
     // ------------------------------------------------------------------------------------------------
@@ -760,6 +942,14 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
      */
     private Map<String, String> createHeaderParamMap() {
         return new HashMap<>();
+    }
+
+    /**
+     * Hack for unit-testing timestamp
+     * @return Clock
+     */
+    private Clock createClock() {
+        return Clock.systemUTC();
     }
 
     /*

@@ -20,6 +20,10 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.time.temporal.TemporalUnit;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -58,10 +62,12 @@ public class TestBtcMarketsExchangeAdapter {
     private static final BigDecimal SELL_ORDER_PRICE = new BigDecimal("300.176");
     private static final BigDecimal SELL_ORDER_QUANTITY = new BigDecimal("0.01");
     private static final String ORDER_ID_TO_CANCEL = "99671870";
+    private static final int LIST_LIMIT = 10;
+    private static final int ORDERS_SINCE = 24;
 
     // Exchange API calls
     private static final String ORDERBOOK = "/market/"+ MARKET_NAME +"/orderbook";
-    private static final String ORDER_INFO = "order_info.do";
+    private static final String ORDER_INFO = "/order/open";
     private static final String USERINFO = "userinfo.do";
     private static final String TICK = "/market/"+ MARKET_NAME +"/tick";
     private static final String CREATE_ORDER = "/order/create";
@@ -72,6 +78,7 @@ public class TestBtcMarketsExchangeAdapter {
     private static final String MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD = "sendPublicRequestToExchange";
     private static final String MOCKED_CREATE_REQUEST_HEADER_MAP_METHOD = "createHeaderParamMap";
     private static final String MOCKED_MAKE_NETWORK_REQUEST_METHOD = "makeNetworkRequest";
+    private static final String MOCKED_CREATE_CLOCK_METHOD = "createClock";
 
     // Exchange Adapter config for the tests
     private static final String KEY = "key123";
@@ -80,9 +87,7 @@ public class TestBtcMarketsExchangeAdapter {
     private static final List<String> nonFatalNetworkErrorMessages = Arrays.asList(
             "Connection refused", "Connection reset", "Remote host closed connection during handshake");
 
-    private static final String OKCOIN_API_VERSION = "v1";
     private static final String PUBLIC_API_BASE_URL = "https://api.btcmarkets.net/";
-    private static final String AUTHENTICATED_API_URL = PUBLIC_API_BASE_URL;
 
     private ExchangeConfig exchangeConfig;
     private AuthenticationConfig authenticationConfig;
@@ -105,6 +110,8 @@ public class TestBtcMarketsExchangeAdapter {
         expect(optionalConfig.getItem("buy-fee")).andReturn("0.2");
         expect(optionalConfig.getItem("sell-fee")).andReturn("0.2");
         expect(optionalConfig.getItem("order-type")).andReturn("Market");
+        expect(optionalConfig.getItem("orders-limit")).andReturn(String.valueOf(LIST_LIMIT));
+        expect(optionalConfig.getItem("orders-since")).andReturn(String.valueOf(ORDERS_SINCE));
 
         exchangeConfig = PowerMock.createMock(ExchangeConfig.class);
         expect(exchangeConfig.getAuthenticationConfig()).andReturn(authenticationConfig);
@@ -360,6 +367,126 @@ public class TestBtcMarketsExchangeAdapter {
         exchangeAdapter.init(exchangeConfig);
 
         exchangeAdapter.createOrder(MARKET_ID, OrderType.BUY, BUY_ORDER_QUANTITY, BUY_ORDER_PRICE);
+        PowerMock.verifyAll();
+    }
+
+    // ------------------------------------------------------------------------------------------------
+    //  Get Your Open Orders tests
+    // ------------------------------------------------------------------------------------------------
+
+    @Test
+    @SuppressWarnings("unchecked")
+    public void testGettingYourOpenOrdersSuccessfully() throws Exception {
+
+        // Load the canned response from the exchange
+        final byte[] encoded = Files.readAllBytes(Paths.get(ORDER_INFO_JSON_RESPONSE));
+        final AbstractExchangeAdapter.ExchangeHttpResponse exchangeResponse =
+                new AbstractExchangeAdapter.ExchangeHttpResponse(200, "OK", new String(encoded, StandardCharsets.UTF_8));
+
+        final Instant time = Instant.now();
+        final Clock clock = PowerMock.createMock(Clock.class);
+        expect(clock.instant()).andStubReturn(time);
+
+        final BtcMarketsExchangeAdapter.BtcMarketsOpenOrdersRequest openOrdersRequest = new BtcMarketsExchangeAdapter.BtcMarketsOpenOrdersRequest();
+        openOrdersRequest.since = time.minus(ORDERS_SINCE, ChronoUnit.HOURS).toEpochMilli();
+        openOrdersRequest.limit = LIST_LIMIT;
+        openOrdersRequest.instrument = BtcMarketsExchangeAdapter.MarketConfig.configOf(MARKET_ID).getBaseCurrency();
+        openOrdersRequest.currency = BtcMarketsExchangeAdapter.MarketConfig.configOf(MARKET_ID).getCounterCurrency();
+
+        // Partial mock so we do not send stuff down the wire
+        final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(
+                BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD, MOCKED_CREATE_CLOCK_METHOD);
+
+        PowerMock.expectPrivate(exchangeAdapter, MOCKED_CREATE_CLOCK_METHOD).andReturn(clock);
+        PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
+                eq(TradingApi.HttpMethod.POST),
+                eq(ORDER_INFO),
+                eq(gson.toJson(openOrdersRequest)),
+                eq(null)).andReturn(exchangeResponse);
+
+        PowerMock.replayAll();
+        exchangeAdapter.init(exchangeConfig);
+
+        final List<OpenOrder> openOrders = exchangeAdapter.getYourOpenOrders(MARKET_ID);
+
+        // assert some key stuff; we're not testing GSON here.
+        assertTrue(openOrders.size() == 2);
+        assertTrue(openOrders.get(0).getMarketId().equals(MARKET_ID));
+        assertTrue(openOrders.get(0).getId().equals("1003245675"));
+        assertTrue(openOrders.get(0).getType() == OrderType.BUY);
+        assertTrue(openOrders.get(0).getCreationDate().getTime() == 1378862733366L);
+        assertTrue(openOrders.get(0).getPrice().compareTo(new BigDecimal("13000000000")) == 0);
+        assertTrue(openOrders.get(0).getQuantity().compareTo(new BigDecimal("10000000")) == 0);
+        assertTrue(openOrders.get(0).getTotal().compareTo(openOrders.get(0).getPrice().multiply(openOrders.get(0).getQuantity())) == 0);
+        assertTrue(openOrders.get(0).getOriginalQuantity().compareTo(new BigDecimal("10000000")) == 0);
+
+        PowerMock.verifyAll();
+    }
+
+    @Test(expected = TradingApiException.class)
+    public void testGettingYourOpenOrdersExchangeErrorResponse() throws Exception {
+
+        // Load the canned response from the exchange
+        final byte[] encoded = Files.readAllBytes(Paths.get(ORDER_INFO_ERROR_JSON_RESPONSE));
+        final AbstractExchangeAdapter.ExchangeHttpResponse exchangeResponse =
+                new AbstractExchangeAdapter.ExchangeHttpResponse(200, "OK", new String(encoded, StandardCharsets.UTF_8));
+
+        // Partial mock so we do not send stuff down the wire
+        final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(
+                BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
+        PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
+                eq(TradingApi.HttpMethod.POST),
+                eq(ORDER_INFO),
+                anyString(),
+                eq(null)).andReturn(exchangeResponse);
+
+        PowerMock.replayAll();
+        exchangeAdapter.init(exchangeConfig);
+
+        exchangeAdapter.getYourOpenOrders("junk_market_id");
+        PowerMock.verifyAll();
+    }
+
+    @Test(expected = ExchangeNetworkException.class)
+    public void testGettingYourOpenOrdersHandlesExchangeNetworkException() throws Exception {
+
+        // Partial mock so we do not send stuff down the wire
+        final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(
+                BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
+        PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
+                eq(TradingApi.HttpMethod.POST),
+                eq(ORDER_INFO),
+                anyString(),
+                eq(null)).andThrow(new ExchangeNetworkException("If more of us valued food and cheer and" +
+                " song above hoarded gold, it would be a merrier world."));
+
+        PowerMock.replayAll();
+        exchangeAdapter.init(exchangeConfig);
+
+        exchangeAdapter.getYourOpenOrders(MARKET_ID);
+        PowerMock.verifyAll();
+    }
+
+    @Test(expected = TradingApiException.class)
+    public void testGettingYourOpenOrdersHandlesUnexpectedException() throws Exception {
+
+        // Partial mock so we do not send stuff down the wire
+        final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(
+                BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
+        PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
+                eq(TradingApi.HttpMethod.POST),
+                eq(ORDER_INFO),
+                anyString(),
+                eq(null)).
+                andThrow(new IllegalStateException("The Road goes ever on and on\n" +
+                        "Down from the door where it began.\n" +
+                        "Now far ahead the Road has gone,\n" +
+                        "And I must follow, if I can"));
+
+        PowerMock.replayAll();
+        exchangeAdapter.init(exchangeConfig);
+
+        exchangeAdapter.getYourOpenOrders(MARKET_ID);
         PowerMock.verifyAll();
     }
 
