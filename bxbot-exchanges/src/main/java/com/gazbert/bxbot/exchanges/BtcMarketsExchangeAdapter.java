@@ -4,22 +4,23 @@ import com.gazbert.bxbot.exchange.api.AuthenticationConfig;
 import com.gazbert.bxbot.exchange.api.ExchangeAdapter;
 import com.gazbert.bxbot.exchange.api.ExchangeConfig;
 import com.gazbert.bxbot.exchange.api.OptionalConfig;
-import com.gazbert.bxbot.exchanges.trading.api.impl.MarketOrderBookImpl;
-import com.gazbert.bxbot.exchanges.trading.api.impl.MarketOrderImpl;
-import com.gazbert.bxbot.exchanges.trading.api.impl.OpenOrderImpl;
-import com.gazbert.bxbot.exchanges.trading.api.impl.TickerImpl;
+import com.gazbert.bxbot.exchanges.trading.api.impl.*;
 import com.gazbert.bxbot.trading.api.*;
 import com.google.common.base.MoreObjects;
-import com.google.common.base.Predicate;
 import com.google.common.collect.Lists;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonSyntaxException;
+import com.google.gson.TypeAdapter;
+import com.google.gson.stream.JsonReader;
+import com.google.gson.stream.JsonToken;
+import com.google.gson.stream.JsonWriter;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.logging.log4j.core.util.SystemClock;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.math.BigDecimal;
 import java.net.MalformedURLException;
@@ -28,12 +29,11 @@ import java.net.URLEncoder;
 import java.security.InvalidKeyException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.text.DecimalFormat;
+import java.text.NumberFormat;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
-import java.util.function.BinaryOperator;
 
 
 /**
@@ -129,6 +129,39 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
     private static final String TIMESTAMP_HEADER = "timestamp";
 
     /**
+     * The numbers provided in the response for price and volume have been converted to an integer format. The conversion is 100000000, or 1E8.
+     */
+    public static final BigDecimal DECIMAL_TO_INT = BigDecimal.valueOf(100000000);
+
+    /**
+     * Maximum 2 decimal points are allowed in BTCMarkets API
+     */
+    public static final int DEFAULT_SCALE = 2;
+
+    /**
+     * GSON Type Adaptor to support BTCMarket Integer type conversion
+     */
+    private static final TypeAdapter<BigDecimal> BIG_DECIMAL_TYPE_ADAPTER = new TypeAdapter<BigDecimal>() {
+        @Override
+        public BigDecimal read(JsonReader in) throws IOException {
+            if (in.peek() == JsonToken.NULL) {
+                in.nextNull();
+                return null;
+            }
+            try {
+                return new BigDecimal(in.nextString()).divide(DECIMAL_TO_INT, DEFAULT_SCALE, BigDecimal.ROUND_DOWN);
+            } catch (NumberFormatException e) {
+                throw new JsonSyntaxException(e);
+            }
+        }
+
+        @Override
+        public void write(JsonWriter out, BigDecimal value) throws IOException {
+            out.value(value.multiply(DECIMAL_TO_INT).longValue());
+        }
+    };
+
+    /**
      * Exchange buy fees in % in {@link BigDecimal} format.
      */
     private BigDecimal buyFeePercentage;
@@ -185,11 +218,6 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
     private MessageDigest messageDigest;
 
     /**
-     * GSON engine used for parsing JSON in RtcMarkets API call responses.
-     */
-    private Gson gson;
-
-    /**
      * BTCMarkets API Methods
      */
     enum ApiMethod {
@@ -197,16 +225,56 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
         CANCEL_ORDER("/order/cancel"),
         ORDERBOOK("/market/%s/orderbook"),
         OPEN_ORDERS("/order/open"),
+        ACCOUNT_BALANCE("/account/balance"),
+        ACCOUNT_TRADING_FEE("/account/%s/tradingfee"),
         TICK("/market/%s/tick");
 
         ApiMethod(String context) {
             this.context = context;
+
+            initGson();
         }
 
-        private String context;
+        private final String context;
+        /**
+         * GSON engine used for parsing JSON in BTCMarkets Account, Fund and Trading API call responses.
+         */
+        private Gson defaultGson;
+        /**
+         * GSON engine used for parsing JSON in BTCMarkets Market API call responses.
+         */
+        private Gson marketGson;
 
         public String getMethod(String instrument) {
             return String.format(context, instrument);
+        }
+
+        public Gson getGson() {
+            switch (this) {
+                case CREATE_ORDER:
+                case CANCEL_ORDER:
+                case OPEN_ORDERS:
+                case ACCOUNT_BALANCE:
+                case ACCOUNT_TRADING_FEE:
+                    return defaultGson;
+                case ORDERBOOK:
+                case TICK:
+                    return marketGson;
+                default:
+                    return defaultGson;
+            }
+        }
+
+        /**
+         * Initialises the GSON layer.
+         */
+        private void initGson() {
+            final GsonBuilder marketGsonBuilder = new GsonBuilder();
+            marketGson = marketGsonBuilder.create();
+
+            final GsonBuilder gsonBuilder = new GsonBuilder();
+            gsonBuilder.registerTypeAdapter(BigDecimal.class, BIG_DECIMAL_TYPE_ADAPTER);
+            defaultGson = gsonBuilder.create();
         }
     }
 
@@ -263,7 +331,6 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
         setOptionalConfig(config);
 
         initSecureMessageLayer();
-        initGson();
     }
 
     @Override
@@ -274,8 +341,9 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
     @Override
     public MarketOrderBook getMarketOrders(String marketId) throws ExchangeNetworkException, TradingApiException {
         try {
-
-            final String apiMethod = ApiMethod.ORDERBOOK.getMethod(MarketConfig.configOf(marketId).getInstrument());
+            final ApiMethod api = ApiMethod.ORDERBOOK;
+            final Gson gson = api.getGson();
+            final String apiMethod = api.getMethod(MarketConfig.configOf(marketId).getInstrument());
             final ExchangeHttpResponse response = sendPublicRequestToExchange(HttpMethod.GET, apiMethod, null, null)    ;
             LOG.debug(() -> "Market Orders response: " + response);
 
@@ -304,13 +372,8 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
             // For some reason, BTC Markets sorts ask orders in descending order instead of ascending.
             // We need to re-order price ascending - lowest ASK price will be first in list.
             sellOrders.sort((thisOrder, thatOrder) -> {
-                if (thisOrder.getPrice().compareTo(thatOrder.getPrice()) < 0) {
-                    return -1;
-                } else if (thisOrder.getPrice().compareTo(thatOrder.getPrice()) > 0) {
-                    return 1;
-                } else {
-                    return 0; // same price
-                }
+                // same price
+                return Integer.compare(thisOrder.getPrice().compareTo(thatOrder.getPrice()), 0);
             });
 
             return new MarketOrderBookImpl(marketId, sellOrders, buyOrders);
@@ -326,7 +389,9 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
     @Override
     public List<OpenOrder> getYourOpenOrders(String marketId) throws ExchangeNetworkException, TradingApiException {
         try {
-            final String apiMethod = ApiMethod.OPEN_ORDERS.getMethod(MarketConfig.configOf(marketId).getInstrument());
+            final ApiMethod api = ApiMethod.OPEN_ORDERS;
+            final Gson gson = api.getGson();
+            final String apiMethod = api.getMethod(MarketConfig.configOf(marketId).getInstrument());
             final BtcMarketsOpenOrdersRequest openOrdersRequest = new BtcMarketsOpenOrdersRequest();
             openOrdersRequest.currency =  MarketConfig.configOf(marketId).getCounterCurrency();
             openOrdersRequest.instrument = MarketConfig.configOf(marketId).getBaseCurrency();
@@ -386,7 +451,8 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
     @Override
     public String createOrder(String marketId, OrderType orderType, BigDecimal quantity, BigDecimal price) throws ExchangeNetworkException, TradingApiException {
         try {
-
+            final ApiMethod api = ApiMethod.CREATE_ORDER;
+            final Gson gson = api.getGson();
             final BtcMarketsCreateOrderRequest createOrderRequest = new BtcMarketsCreateOrderRequest();
             final MarketConfig marketConfig = MarketConfig.configOf(marketId);
 
@@ -409,7 +475,7 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
             createOrderRequest.price = price;
             createOrderRequest.volume = quantity;
 
-            String apiMethod = ApiMethod.CREATE_ORDER.getMethod(MarketConfig.configOf(marketId).getInstrument());
+            String apiMethod = api.getMethod(MarketConfig.configOf(marketId).getInstrument());
             final ExchangeHttpResponse response = sendPublicRequestToExchange(HttpMethod.POST, apiMethod, gson.toJson(createOrderRequest), null);
             LOG.debug(() -> "Create Order response: " + response);
 
@@ -433,10 +499,11 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
     @Override
     public boolean cancelOrder(String orderId, String marketId) throws ExchangeNetworkException, TradingApiException {
         try {
+            final ApiMethod api = ApiMethod.CANCEL_ORDER;
+            final Gson gson = api.getGson();
+            final BtcMarketsCancelOrderRequest cancelOrderRequest = new BtcMarketsCancelOrderRequest(Lists.newArrayList(orderId));
+            final String apiMethod = api.getMethod(MarketConfig.configOf(marketId).getInstrument());
 
-            BtcMarketsCancelOrderRequest cancelOrderRequest = new BtcMarketsCancelOrderRequest(Lists.newArrayList(orderId));
-
-            String apiMethod = ApiMethod.CANCEL_ORDER.getMethod(MarketConfig.configOf(marketId).getInstrument());
             final ExchangeHttpResponse response = sendPublicRequestToExchange(HttpMethod.POST, apiMethod, gson.toJson(cancelOrderRequest), null);
             LOG.debug(() -> "Cancel Order response: " + response);
 
@@ -460,7 +527,9 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
     @Override
     public BigDecimal getLatestMarketPrice(String marketId) throws ExchangeNetworkException, TradingApiException {
         try {
-            String apiMethod = ApiMethod.TICK.getMethod(MarketConfig.configOf(marketId).getInstrument());
+            final ApiMethod api = ApiMethod.TICK;
+            final Gson gson = api.getGson();
+            final String apiMethod = api.getMethod(MarketConfig.configOf(marketId).getInstrument());
             final ExchangeHttpResponse response = sendPublicRequestToExchange(HttpMethod.GET, apiMethod, null, null);
             LOG.debug(() -> "Latest Market Price response: " + response);
 
@@ -477,23 +546,74 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
 
     @Override
     public BalanceInfo getBalanceInfo() throws ExchangeNetworkException, TradingApiException {
-        return null;
+        try {
+            final ApiMethod api = ApiMethod.ACCOUNT_BALANCE;
+            final Gson gson = api.getGson();
+            final String apiMethod = api.getMethod(null);
+            final ExchangeHttpResponse response = sendPublicRequestToExchange(HttpMethod.GET, apiMethod, null, null);
+            LOG.debug(() -> "Balance Info response: " + response);
+
+            final Optional<BtcMarketsAccountBalancesWrapper> accountBalancesWrapper = Optional.ofNullable(gson.fromJson(response.getPayload(), BtcMarketsAccountBalancesWrapper.class));
+            if (accountBalancesWrapper.isPresent()) {
+
+                final BtcMarketsAccountBalancesWrapper accountBalances = accountBalancesWrapper.get();
+                final Map<String, BigDecimal> balancesAvailable = new HashMap<>();
+                final Map<String, BigDecimal> balancesOnOrder = new HashMap<>();
+                for (BtcMarketsAccountBalance accountBalance : accountBalances) {
+                    balancesAvailable.put(accountBalance.currency.toUpperCase(), accountBalance.balance);
+                    balancesOnOrder.put(accountBalance.currency.toUpperCase(), accountBalance.pendingFunds);
+                }
+
+                return new BalanceInfoImpl(balancesAvailable, balancesOnOrder);
+
+            } else {
+                final String errorMsg = "Failed to get Balance Info from exchange. Error response: " + response;
+                LOG.error(errorMsg);
+                throw new TradingApiException(errorMsg);
+            }
+
+        } catch (ExchangeNetworkException | TradingApiException e) {
+            throw e;
+        } catch (Exception e) {
+            LOG.error(UNEXPECTED_ERROR_MSG, e);
+            throw new TradingApiException(UNEXPECTED_ERROR_MSG, e);
+        }
     }
 
     @Override
     public BigDecimal getPercentageOfBuyOrderTakenForExchangeFee(String marketId) throws TradingApiException, ExchangeNetworkException {
-        return null;
+        try {
+            final ApiMethod api = ApiMethod.ACCOUNT_TRADING_FEE;
+            final Gson gson = api.getGson();
+            final String apiMethod = api.getMethod(MarketConfig.configOf(marketId).getInstrument());
+            final ExchangeHttpResponse response = sendPublicRequestToExchange(HttpMethod.GET, apiMethod, null, null);
+            LOG.debug(() -> "Buy Fee response: " + response);
+
+            final BtcMarketsTradingFeeResponse feeResponse = gson.fromJson(response.getPayload(), BtcMarketsTradingFeeResponse.class);
+
+            // adapt the % into BigDecimal format
+            final BigDecimal fee = BigDecimal.valueOf(feeResponse.getTradingFeeRate());
+            return fee.divide(new BigDecimal("100"), 8, BigDecimal.ROUND_HALF_UP);
+
+        } catch (ExchangeNetworkException | TradingApiException e) {
+            throw e;
+        } catch (Exception e) {
+            LOG.error(UNEXPECTED_ERROR_MSG, e);
+            throw new TradingApiException(UNEXPECTED_ERROR_MSG, e);
+        }
     }
 
     @Override
     public BigDecimal getPercentageOfSellOrderTakenForExchangeFee(String marketId) throws TradingApiException, ExchangeNetworkException {
-        return null;
+        return getPercentageOfBuyOrderTakenForExchangeFee(marketId);
     }
 
     @Override
     public Ticker getTicker(String marketId) throws TradingApiException, ExchangeNetworkException {
         try {
-            String apiMethod = ApiMethod.TICK.getMethod(MarketConfig.configOf(marketId).getInstrument());
+            final ApiMethod api = ApiMethod.TICK;
+            final Gson gson = api.getGson();
+            final String apiMethod = api.getMethod(MarketConfig.configOf(marketId).getInstrument());
             final ExchangeHttpResponse response = sendPublicRequestToExchange(HttpMethod.GET, apiMethod, null, null);
             LOG.debug(() -> "Latest Market Price response: " + response);
 
@@ -615,6 +735,42 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
         public String toString() {
             return MoreObjects.toStringHelper(this)
                     .add("id", id)
+                    .toString();
+        }
+    }
+
+    public static class BtcMarketsTradingFeeResponse extends BtcMarketsMessageBase {
+        private long tradingFeeRate;
+        private long volume30Day;
+
+        public Double getTradingFeeRateAsPercent() {
+            return tradingFeeRate / DECIMAL_TO_INT.doubleValue();
+        }
+
+        public String getVolume30DayAsAud() {
+            return NumberFormat.getCurrencyInstance().format(volume30Day / DECIMAL_TO_INT.doubleValue()) + " AUD";
+        }
+
+        public long getTradingFeeRate() {
+            return tradingFeeRate;
+        }
+
+        public void setTradingFeeRate(long tradingFeeRate) {
+            this.tradingFeeRate = tradingFeeRate;
+        }
+
+        public long getVolume30Day() {
+            return volume30Day;
+        }
+
+        public void setVolume30Day(long volume30Day) {
+            this.volume30Day = volume30Day;
+        }
+
+        public String toString() {
+            return MoreObjects.toStringHelper(this)
+                    .add("tradingFeeRate", getTradingFeeRateAsPercent())
+                    .add("volume30Day", getVolume30DayAsAud())
                     .toString();
         }
     }
@@ -777,6 +933,30 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
         }
     }
 
+    /**
+     * GSON class for a BTCMarkets Account Balance response.
+     */
+    private static class BtcMarketsAccountBalance {
+        public BigDecimal balance;
+        public BigDecimal pendingFunds;
+        public String currency;
+
+        @Override
+        public String toString() {
+            return MoreObjects.toStringHelper(this)
+                    .add("balance", balance)
+                    .add("pendingFunds", pendingFunds)
+                    .add("currency", currency)
+                    .toString();
+        }
+    }
+
+    /**
+     * GSON class for holding a list of Account Balances.
+     */
+    private static class BtcMarketsAccountBalancesWrapper extends ArrayList<BtcMarketsAccountBalance> {
+    }
+
     // ------------------------------------------------------------------------------------------------
     //  Transport layer methods
     // ------------------------------------------------------------------------------------------------
@@ -921,14 +1101,6 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
     // ------------------------------------------------------------------------------------------------
     //  Util methods
     // ------------------------------------------------------------------------------------------------
-
-    /**
-     * Initialises the GSON layer.
-     */
-    private void initGson() {
-        final GsonBuilder gsonBuilder = new GsonBuilder();
-        gson = gsonBuilder.create();
-    }
 
     /*
      * Hack for unit-testing map params passed to transport layer.

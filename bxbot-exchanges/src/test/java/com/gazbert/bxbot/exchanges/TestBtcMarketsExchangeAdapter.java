@@ -23,7 +23,6 @@ import java.nio.file.Paths;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.time.temporal.TemporalUnit;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -45,8 +44,8 @@ public class TestBtcMarketsExchangeAdapter {
     private static final String ORDERBOOK_JSON_RESPONSE = "./src/test/exchange-data/btcmarkets/orderbook.json";
     private static final String TICK_JSON_RESPONSE = "./src/test/exchange-data/btcmarkets/ticker.json";
     private static final String CANCEL_ORDER_JSON_RESPONSE = "./src/test/exchange-data/btcmarkets/cancel_order.json";
-    private static final String USERINFO_JSON_RESPONSE = "./src/test/exchange-data/btcmarkets/userinfo.json";
-    private static final String USERINFO_ERROR_JSON_RESPONSE = "./src/test/exchange-data/btcmarkets/userinfo-error.json";
+    private static final String ACCOUNT_BALANCE_JSON_RESPONSE = "./src/test/exchange-data/btcmarkets/account_balance.json";
+    private static final String USERINFO_ERROR_JSON_RESPONSE = "./src/test/exchange-data/btcmarkets/account_balance-error.json";
     private static final String ORDER_INFO_JSON_RESPONSE = "./src/test/exchange-data/btcmarkets/order_info.json";
     private static final String ORDER_INFO_ERROR_JSON_RESPONSE = "./src/test/exchange-data/btcmarkets/order_info-error.json";
     private static final String CREATE_ORDER_SUCCESS_JSON_RESPONSE = "./src/test/exchange-data/btcmarkets/create_oder_success.json";
@@ -64,14 +63,6 @@ public class TestBtcMarketsExchangeAdapter {
     private static final String ORDER_ID_TO_CANCEL = "99671870";
     private static final int LIST_LIMIT = 10;
     private static final int ORDERS_SINCE = 24;
-
-    // Exchange API calls
-    private static final String ORDERBOOK = "/market/"+ MARKET_NAME +"/orderbook";
-    private static final String ORDER_INFO = "/order/open";
-    private static final String USERINFO = "userinfo.do";
-    private static final String TICK = "/market/"+ MARKET_NAME +"/tick";
-    private static final String CREATE_ORDER = "/order/create";
-    private static final String CANCEL_ORDER = "/order/cancel";
 
     // Mocked out methods
     private static final String MOCKED_CREATE_REQUEST_PARAM_MAP_METHOD = "createRequestParamMap";
@@ -93,7 +84,6 @@ public class TestBtcMarketsExchangeAdapter {
     private AuthenticationConfig authenticationConfig;
     private NetworkConfig networkConfig;
     private OptionalConfig optionalConfig;
-    private Gson gson;
 
     @Before
     public void setup() {
@@ -117,8 +107,6 @@ public class TestBtcMarketsExchangeAdapter {
         expect(exchangeConfig.getAuthenticationConfig()).andReturn(authenticationConfig);
         expect(exchangeConfig.getNetworkConfig()).andReturn(networkConfig);
         expect(exchangeConfig.getOptionalConfig()).andReturn(optionalConfig);
-
-        gson = new GsonBuilder().create();
     }
 
     // ------------------------------------------------------------------------------------------------
@@ -128,7 +116,7 @@ public class TestBtcMarketsExchangeAdapter {
     @Test
     @SuppressWarnings("unchecked")
     public void testCancelOrderIsSuccessful() throws Exception {
-
+        final BtcMarketsExchangeAdapter.ApiMethod api = BtcMarketsExchangeAdapter.ApiMethod.CANCEL_ORDER;
         // Load the canned response from the exchange
         final byte[] encoded = Files.readAllBytes(Paths.get(CANCEL_ORDER_JSON_RESPONSE));
         final AbstractExchangeAdapter.ExchangeHttpResponse exchangeResponse =
@@ -143,8 +131,8 @@ public class TestBtcMarketsExchangeAdapter {
 
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
                 eq(TradingApi.HttpMethod.POST),
-                eq(CANCEL_ORDER),
-                eq(gson.toJson(requestObject)),
+                eq(api.getMethod(MARKET_NAME)),
+                eq(api.getGson().toJson(requestObject)),
                 anyObject(Map.class)).andReturn(exchangeResponse);
 
         PowerMock.replayAll();
@@ -158,7 +146,7 @@ public class TestBtcMarketsExchangeAdapter {
 
     @Test
     public void testCancelOrderExchangeErrorResponse() throws Exception {
-
+        final BtcMarketsExchangeAdapter.ApiMethod api = BtcMarketsExchangeAdapter.ApiMethod.CANCEL_ORDER;
         // Load the canned response from the exchange
         final byte[] encoded = Files.readAllBytes(Paths.get(CANCEL_ORDER_ERROR_JSON_RESPONSE));
         final AbstractExchangeAdapter.ExchangeHttpResponse exchangeResponse =
@@ -169,7 +157,7 @@ public class TestBtcMarketsExchangeAdapter {
                 BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
                 eq(TradingApi.HttpMethod.POST),
-                eq(CANCEL_ORDER),
+                eq(api.getMethod(MARKET_NAME)),
                 anyObject(BtcMarketsExchangeAdapter.BtcMarketsCancelOrderRequest.class),
                 anyObject(Map.class)).andReturn(exchangeResponse);
 
@@ -182,13 +170,13 @@ public class TestBtcMarketsExchangeAdapter {
 
     @Test(expected = ExchangeNetworkException.class)
     public void testCancelOrderHandlesExchangeNetworkException() throws Exception {
-
+        final BtcMarketsExchangeAdapter.ApiMethod api = BtcMarketsExchangeAdapter.ApiMethod.CANCEL_ORDER;
         // Partial mock so we do not send stuff down the wire
         final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(
                 BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
                 eq(TradingApi.HttpMethod.POST),
-                eq(CANCEL_ORDER),
+                eq(api.getMethod(MARKET_NAME)),
                 anyObject(BtcMarketsExchangeAdapter.BtcMarketsCancelOrderRequest.class),
                 anyObject(Map.class)).
                 andThrow(new ExchangeNetworkException("I’ve thought of an ending for my book – “And he lived happily " +
@@ -203,13 +191,13 @@ public class TestBtcMarketsExchangeAdapter {
 
     @Test(expected = TradingApiException.class)
     public void testCancelOrderHandlesUnexpectedException() throws Exception {
-
+        final BtcMarketsExchangeAdapter.ApiMethod api = BtcMarketsExchangeAdapter.ApiMethod.CANCEL_ORDER;
         // Partial mock so we do not send stuff down the wire
         final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(
                 BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
                 eq(TradingApi.HttpMethod.POST),
-                eq(CANCEL_ORDER),
+                eq(api.getMethod(MARKET_NAME)),
                 anyObject(BtcMarketsExchangeAdapter.BtcMarketsCancelOrderRequest.class),
                 anyObject(Map.class)).
                 andThrow(new IllegalStateException("A Balrog. A demon of the ancient world. This foe is beyond any of" +
@@ -229,7 +217,7 @@ public class TestBtcMarketsExchangeAdapter {
     @Test
     @SuppressWarnings("unchecked")
     public void testCreateOrderToBuyIsSuccessful() throws Exception {
-
+        final BtcMarketsExchangeAdapter.ApiMethod api = BtcMarketsExchangeAdapter.ApiMethod.CREATE_ORDER;
         // Load the canned response from the exchange
         final byte[] encoded = Files.readAllBytes(Paths.get(CREATE_ORDER_SUCCESS_JSON_RESPONSE));
         final AbstractExchangeAdapter.ExchangeHttpResponse exchangeResponse =
@@ -250,8 +238,8 @@ public class TestBtcMarketsExchangeAdapter {
 
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
                 eq(TradingApi.HttpMethod.POST),
-                eq(CREATE_ORDER),
-                eq(gson.toJson(createOrderRequest)),
+                eq(api.getMethod(MARKET_NAME)),
+                eq(api.getGson().toJson(createOrderRequest)),
                 eq(null)).andReturn(exchangeResponse);
 
         PowerMock.replayAll();
@@ -266,7 +254,7 @@ public class TestBtcMarketsExchangeAdapter {
     @Test
     @SuppressWarnings("unchecked")
     public void testCreateOrderToSellIsSuccessful() throws Exception {
-
+        final BtcMarketsExchangeAdapter.ApiMethod api = BtcMarketsExchangeAdapter.ApiMethod.CREATE_ORDER;
         // Load the canned response from the exchange
         final byte[] encoded = Files.readAllBytes(Paths.get(CREATE_ORDER_SUCCESS_JSON_RESPONSE));
         final AbstractExchangeAdapter.ExchangeHttpResponse exchangeResponse =
@@ -287,8 +275,8 @@ public class TestBtcMarketsExchangeAdapter {
 
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
                 eq(TradingApi.HttpMethod.POST),
-                eq(CREATE_ORDER),
-                eq(gson.toJson(createOrderRequest)),
+                eq(api.getMethod(MARKET_NAME)),
+                eq(api.getGson().toJson(createOrderRequest)),
                 eq(null)).andReturn(exchangeResponse);
 
         PowerMock.replayAll();
@@ -302,7 +290,7 @@ public class TestBtcMarketsExchangeAdapter {
 
     @Test(expected = TradingApiException.class)
     public void testCreateOrderExchangeErrorResponse() throws Exception {
-
+        final BtcMarketsExchangeAdapter.ApiMethod api = BtcMarketsExchangeAdapter.ApiMethod.CREATE_ORDER;
         // Load the canned response from the exchange
         final byte[] encoded = Files.readAllBytes(Paths.get(CREATE_ORDER_FAIL_JSON_RESPONSE));
         final AbstractExchangeAdapter.ExchangeHttpResponse exchangeResponse =
@@ -313,7 +301,7 @@ public class TestBtcMarketsExchangeAdapter {
                 BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
                 eq(TradingApi.HttpMethod.POST),
-                eq(CREATE_ORDER),
+                eq(api.getMethod(MARKET_NAME)),
                 anyObject(String.class),
                 eq(null)).andReturn(exchangeResponse);
 
@@ -326,13 +314,13 @@ public class TestBtcMarketsExchangeAdapter {
 
     @Test(expected = ExchangeNetworkException.class)
     public void testCreateOrderHandlesExchangeNetworkException() throws Exception {
-
+        final BtcMarketsExchangeAdapter.ApiMethod api = BtcMarketsExchangeAdapter.ApiMethod.CREATE_ORDER;
         // Partial mock so we do not send stuff down the wire
         final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(
                 BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
                 eq(TradingApi.HttpMethod.POST),
-                eq(CREATE_ORDER),
+                eq(api.getMethod(MARKET_NAME)),
                 anyObject(String.class),
                 eq(null)).andThrow(new ExchangeNetworkException("It’s like in the great stories, Mr. Frodo, the ones that really " +
                         "mattered. Full of darkness and danger, they were... Those were the stories that stayed" +
@@ -349,13 +337,13 @@ public class TestBtcMarketsExchangeAdapter {
 
     @Test(expected = TradingApiException.class)
     public void testCreateOrderHandlesUnexpectedException() throws Exception {
-
+        final BtcMarketsExchangeAdapter.ApiMethod api = BtcMarketsExchangeAdapter.ApiMethod.CREATE_ORDER;
         // Partial mock so we do not send stuff down the wire
         final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(
                 BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
                 eq(TradingApi.HttpMethod.POST),
-                eq(CREATE_ORDER),
+                eq(api.getMethod(MARKET_NAME)),
                 anyObject(String.class),
                 eq(null)).
                 andThrow(new IllegalArgumentException("We needs it. Must have the precious. They stole it from us. " +
@@ -377,7 +365,7 @@ public class TestBtcMarketsExchangeAdapter {
     @Test
     @SuppressWarnings("unchecked")
     public void testGettingYourOpenOrdersSuccessfully() throws Exception {
-
+        final BtcMarketsExchangeAdapter.ApiMethod api = BtcMarketsExchangeAdapter.ApiMethod.OPEN_ORDERS;
         // Load the canned response from the exchange
         final byte[] encoded = Files.readAllBytes(Paths.get(ORDER_INFO_JSON_RESPONSE));
         final AbstractExchangeAdapter.ExchangeHttpResponse exchangeResponse =
@@ -400,8 +388,8 @@ public class TestBtcMarketsExchangeAdapter {
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_CREATE_CLOCK_METHOD).andReturn(clock);
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
                 eq(TradingApi.HttpMethod.POST),
-                eq(ORDER_INFO),
-                eq(gson.toJson(openOrdersRequest)),
+                eq(api.getMethod(MARKET_NAME)),
+                eq(api.getGson().toJson(openOrdersRequest)),
                 eq(null)).andReturn(exchangeResponse);
 
         PowerMock.replayAll();
@@ -415,17 +403,17 @@ public class TestBtcMarketsExchangeAdapter {
         assertTrue(openOrders.get(0).getId().equals("1003245675"));
         assertTrue(openOrders.get(0).getType() == OrderType.BUY);
         assertTrue(openOrders.get(0).getCreationDate().getTime() == 1378862733366L);
-        assertTrue(openOrders.get(0).getPrice().compareTo(new BigDecimal("13000000000")) == 0);
-        assertTrue(openOrders.get(0).getQuantity().compareTo(new BigDecimal("10000000")) == 0);
+        assertTrue(openOrders.get(0).getPrice().compareTo(new BigDecimal("130.00")) == 0);
+        assertTrue(openOrders.get(0).getQuantity().compareTo(new BigDecimal("0.1")) == 0);
         assertTrue(openOrders.get(0).getTotal().compareTo(openOrders.get(0).getPrice().multiply(openOrders.get(0).getQuantity())) == 0);
-        assertTrue(openOrders.get(0).getOriginalQuantity().compareTo(new BigDecimal("10000000")) == 0);
+        assertTrue(openOrders.get(0).getOriginalQuantity().compareTo(new BigDecimal("0.1")) == 0);
 
         PowerMock.verifyAll();
     }
 
     @Test(expected = TradingApiException.class)
     public void testGettingYourOpenOrdersExchangeErrorResponse() throws Exception {
-
+        final BtcMarketsExchangeAdapter.ApiMethod api = BtcMarketsExchangeAdapter.ApiMethod.ORDERBOOK;
         // Load the canned response from the exchange
         final byte[] encoded = Files.readAllBytes(Paths.get(ORDER_INFO_ERROR_JSON_RESPONSE));
         final AbstractExchangeAdapter.ExchangeHttpResponse exchangeResponse =
@@ -436,7 +424,7 @@ public class TestBtcMarketsExchangeAdapter {
                 BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
                 eq(TradingApi.HttpMethod.POST),
-                eq(ORDER_INFO),
+                eq(api.getMethod(MARKET_NAME)),
                 anyString(),
                 eq(null)).andReturn(exchangeResponse);
 
@@ -449,13 +437,13 @@ public class TestBtcMarketsExchangeAdapter {
 
     @Test(expected = ExchangeNetworkException.class)
     public void testGettingYourOpenOrdersHandlesExchangeNetworkException() throws Exception {
-
+        final BtcMarketsExchangeAdapter.ApiMethod api = BtcMarketsExchangeAdapter.ApiMethod.OPEN_ORDERS;
         // Partial mock so we do not send stuff down the wire
         final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(
                 BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
                 eq(TradingApi.HttpMethod.POST),
-                eq(ORDER_INFO),
+                eq(api.getMethod(MARKET_NAME)),
                 anyString(),
                 eq(null)).andThrow(new ExchangeNetworkException("If more of us valued food and cheer and" +
                 " song above hoarded gold, it would be a merrier world."));
@@ -469,13 +457,13 @@ public class TestBtcMarketsExchangeAdapter {
 
     @Test(expected = TradingApiException.class)
     public void testGettingYourOpenOrdersHandlesUnexpectedException() throws Exception {
-
+        final BtcMarketsExchangeAdapter.ApiMethod api = BtcMarketsExchangeAdapter.ApiMethod.OPEN_ORDERS;
         // Partial mock so we do not send stuff down the wire
         final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(
                 BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
                 eq(TradingApi.HttpMethod.POST),
-                eq(ORDER_INFO),
+                eq(api.getMethod(MARKET_NAME)),
                 anyString(),
                 eq(null)).
                 andThrow(new IllegalStateException("The Road goes ever on and on\n" +
@@ -497,7 +485,7 @@ public class TestBtcMarketsExchangeAdapter {
     @Test
     @SuppressWarnings("unchecked")
     public void testGettingMarketOrders() throws Exception {
-
+        final BtcMarketsExchangeAdapter.ApiMethod api = BtcMarketsExchangeAdapter.ApiMethod.ORDERBOOK;
         // Load the canned response from the exchange
         final byte[] encoded = Files.readAllBytes(Paths.get(ORDERBOOK_JSON_RESPONSE));
         final AbstractExchangeAdapter.ExchangeHttpResponse exchangeResponse =
@@ -509,7 +497,7 @@ public class TestBtcMarketsExchangeAdapter {
 
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
                 eq(TradingApi.HttpMethod.GET),
-                eq(ORDERBOOK),
+                eq(api.getMethod(MARKET_NAME)),
                 eq(null),
                 eq(null)).andReturn(exchangeResponse);
 
@@ -593,7 +581,7 @@ public class TestBtcMarketsExchangeAdapter {
     @Test
     @SuppressWarnings("unchecked")
     public void testGettingLatestMarketPriceSuccessfully() throws Exception {
-
+        final BtcMarketsExchangeAdapter.ApiMethod api = BtcMarketsExchangeAdapter.ApiMethod.TICK;
         // Load the canned response from the exchange
         final byte[] encoded = Files.readAllBytes(Paths.get(TICK_JSON_RESPONSE));
         final AbstractExchangeAdapter.ExchangeHttpResponse exchangeResponse =
@@ -605,7 +593,7 @@ public class TestBtcMarketsExchangeAdapter {
 
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
                 eq(TradingApi.HttpMethod.GET),
-                eq(TICK),
+                eq(api.getMethod(MARKET_NAME)),
                 eq(null),
                 eq(null)).andReturn(exchangeResponse);
 
@@ -619,13 +607,13 @@ public class TestBtcMarketsExchangeAdapter {
 
     @Test(expected = ExchangeNetworkException.class)
     public void testGettingLatestMarketPriceHandlesExchangeNetworkException() throws Exception {
-
+        final BtcMarketsExchangeAdapter.ApiMethod api = BtcMarketsExchangeAdapter.ApiMethod.TICK;
         // Partial mock so we do not send stuff down the wire
         final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(
                 BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
                 eq(TradingApi.HttpMethod.GET),
-                eq(TICK),
+                eq(api.getMethod(MARKET_NAME)),
                 eq(null),
                 anyObject(Map.class)).
                 andThrow(new ExchangeNetworkException("I would rather share one lifetime with you than face all the" +
@@ -640,13 +628,13 @@ public class TestBtcMarketsExchangeAdapter {
 
     @Test(expected = TradingApiException.class)
     public void testGettingLatestMarketPriceHandlesUnexpectedException() throws Exception {
-
+        final BtcMarketsExchangeAdapter.ApiMethod api = BtcMarketsExchangeAdapter.ApiMethod.TICK;
         // Partial mock so we do not send stuff down the wire
         final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(
                 BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
                 eq(TradingApi.HttpMethod.GET),
-                eq(TICK),
+                eq(api.getMethod(MARKET_NAME)),
                 eq(null),
                 anyObject(Map.class)).
                 andThrow(new IllegalArgumentException("What has happened before will happen again. What has been done " +
@@ -663,13 +651,118 @@ public class TestBtcMarketsExchangeAdapter {
     }
 
     // ------------------------------------------------------------------------------------------------
+    //  Get Balance Info tests
+    // ------------------------------------------------------------------------------------------------
+
+    @Test
+    public void testGettingBalanceInfoSuccessfully() throws Exception {
+        final BtcMarketsExchangeAdapter.ApiMethod api = BtcMarketsExchangeAdapter.ApiMethod.ACCOUNT_BALANCE;
+        // Load the canned response from the exchange
+        final byte[] encoded = Files.readAllBytes(Paths.get(ACCOUNT_BALANCE_JSON_RESPONSE));
+        final BtcMarketsExchangeAdapter.ExchangeHttpResponse exchangeResponse =
+                new BtcMarketsExchangeAdapter.ExchangeHttpResponse(200, "OK", new String(encoded, StandardCharsets.UTF_8));
+
+        // Partial mock so we do not send stuff down the wire
+        final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(
+                BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
+
+        PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
+                eq(TradingApi.HttpMethod.GET),
+                eq(api.getMethod(MARKET_NAME)),
+                eq(null),
+                eq(null)).andReturn(exchangeResponse);
+
+        PowerMock.replayAll();
+        exchangeAdapter.init(exchangeConfig);
+
+        final BalanceInfo balanceInfo = exchangeAdapter.getBalanceInfo();
+
+        // assert some key stuff; we're not testing GSON here.
+        assertTrue(balanceInfo.getBalancesAvailable().get("AUD").compareTo(new BigDecimal("130.00")) == 0);
+        assertTrue(balanceInfo.getBalancesAvailable().get("BTC").compareTo(new BigDecimal("131.00")) == 0);
+        assertTrue(balanceInfo.getBalancesAvailable().get("LTC").compareTo(new BigDecimal("132.00")) == 0);
+
+        assertTrue(balanceInfo.getBalancesOnHold().get("AUD").compareTo(new BigDecimal("0.03")) == 0);
+        assertTrue(balanceInfo.getBalancesOnHold().get("BTC").compareTo(new BigDecimal("2.25")) == 0);
+        assertTrue(balanceInfo.getBalancesOnHold().get("LTC").compareTo(new BigDecimal("2.01")) == 0);
+
+        PowerMock.verifyAll();
+    }
+
+    @Test(expected = TradingApiException.class)
+    public void testGettingBalanceInfoExchangeErrorResponse() throws Exception {
+        final BtcMarketsExchangeAdapter.ApiMethod api = BtcMarketsExchangeAdapter.ApiMethod.ACCOUNT_BALANCE;
+        // Load the canned response from the exchange
+        final byte[] encoded = Files.readAllBytes(Paths.get(USERINFO_ERROR_JSON_RESPONSE));
+        final AbstractExchangeAdapter.ExchangeHttpResponse exchangeResponse =
+                new AbstractExchangeAdapter.ExchangeHttpResponse(200, "OK", new String(encoded, StandardCharsets.UTF_8));
+
+        // Partial mock so we do not send stuff down the wire
+        final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(
+                BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
+        PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
+                eq(TradingApi.HttpMethod.GET),
+                eq(api.getMethod(MARKET_NAME)),
+                eq(null),
+                eq(null)).andReturn(exchangeResponse);
+
+        PowerMock.replayAll();
+        exchangeAdapter.init(exchangeConfig);
+
+        exchangeAdapter.getBalanceInfo();
+        PowerMock.verifyAll();
+    }
+
+    @Test(expected = ExchangeNetworkException.class)
+    public void testGettingBalanceInfoHandlesExchangeNetworkException() throws Exception {
+        final BtcMarketsExchangeAdapter.ApiMethod api = BtcMarketsExchangeAdapter.ApiMethod.ACCOUNT_BALANCE;
+        // Partial mock so we do not send stuff down the wire
+        final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(
+                BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
+        PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
+                eq(TradingApi.HttpMethod.GET),
+                eq(api.getMethod(MARKET_NAME)),
+                eq(null),
+                eq(null)).andThrow(new ExchangeNetworkException("There is only one Lord of the Ring, only one who can" +
+                " bend it to his will. And he does not share power."));
+
+        PowerMock.replayAll();
+        exchangeAdapter.init(exchangeConfig);
+
+        exchangeAdapter.getBalanceInfo();
+        PowerMock.verifyAll();
+    }
+
+    @Test(expected = TradingApiException.class)
+    public void testGettingBalanceInfoHandlesUnexpectedException() throws Exception {
+        final BtcMarketsExchangeAdapter.ApiMethod api = BtcMarketsExchangeAdapter.ApiMethod.ACCOUNT_BALANCE;
+        // Partial mock so we do not send stuff down the wire
+        final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(
+                BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
+        PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
+                eq(TradingApi.HttpMethod.GET),
+                eq(api.getMethod(MARKET_NAME)),
+                eq(null),
+                eq(null)).
+                andThrow(new IllegalStateException("It's a dangerous business, Frodo, going out your door. You step " +
+                        "onto the road, and if you don't keep your feet, there's no knowing where you might be swept " +
+                        "off to."));
+
+        PowerMock.replayAll();
+        exchangeAdapter.init(exchangeConfig);
+
+        exchangeAdapter.getBalanceInfo();
+        PowerMock.verifyAll();
+    }
+
+    // ------------------------------------------------------------------------------------------------
     //  Get Tick tests
     // ------------------------------------------------------------------------------------------------
 
     @Test
     @SuppressWarnings("unchecked")
     public void testGettingTickerSuccessfully() throws Exception {
-
+        final BtcMarketsExchangeAdapter.ApiMethod api = BtcMarketsExchangeAdapter.ApiMethod.TICK;
         // Load the canned response from the exchange
         final byte[] encoded = Files.readAllBytes(Paths.get(TICK_JSON_RESPONSE));
         final AbstractExchangeAdapter.ExchangeHttpResponse exchangeResponse =
@@ -681,7 +774,7 @@ public class TestBtcMarketsExchangeAdapter {
 
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
                 eq(TradingApi.HttpMethod.GET),
-                eq(TICK),
+                eq(api.getMethod(MARKET_NAME)),
                 eq(null),
                 eq(null)).andReturn(exchangeResponse);
 
@@ -704,13 +797,13 @@ public class TestBtcMarketsExchangeAdapter {
 
     @Test(expected = ExchangeNetworkException.class)
     public void testGettingTickerHandlesExchangeNetworkException() throws Exception {
-
+        final BtcMarketsExchangeAdapter.ApiMethod api = BtcMarketsExchangeAdapter.ApiMethod.TICK;
         // Partial mock so we do not send stuff down the wire
         final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(
                 BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
                 eq(TradingApi.HttpMethod.GET),
-                eq(TICK),
+                eq(api.getMethod(MARKET_NAME)),
                 eq(null),
                 anyObject(Map.class)).
                 andThrow(new ExchangeNetworkException("Where the hell can I get eyes like that?"));
@@ -724,13 +817,13 @@ public class TestBtcMarketsExchangeAdapter {
 
     @Test(expected = TradingApiException.class)
     public void testGettingTickerHandlesUnexpectedException() throws Exception {
-
+        final BtcMarketsExchangeAdapter.ApiMethod api = BtcMarketsExchangeAdapter.ApiMethod.TICK;
         // Partial mock so we do not send stuff down the wire
         final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(
                 BtcMarketsExchangeAdapter.class, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD);
         PowerMock.expectPrivate(exchangeAdapter, MOCKED_SEND_PUBLIC_REQUEST_TO_EXCHANGE_METHOD,
                 eq(TradingApi.HttpMethod.GET),
-                eq(TICK),
+                eq(api.getMethod(MARKET_NAME)),
                 eq(null),
                 anyObject(Map.class)).
                 andThrow(new IllegalArgumentException("All you people are so scared of me. " +
