@@ -54,7 +54,7 @@ public class TestBtcMarketsExchangeAdapter {
     private static final String CANCEL_ORDER_ERROR_JSON_RESPONSE = "./src/test/exchange-data/btcmarkets/cancel_order-error.json";
 
     // Canned test data
-    private static final String MARKET_ID = "btcaud";
+    private static final String MARKET_ID = "btc_aud";
     private static final String MARKET_NAME = "BTC/AUD";
     private static final BigDecimal BUY_ORDER_PRICE = new BigDecimal("200.18");
     private static final BigDecimal BUY_ORDER_QUANTITY = new BigDecimal("0.01");
@@ -231,6 +231,7 @@ public class TestBtcMarketsExchangeAdapter {
         createOrderRequest.currency = BtcMarketsExchangeAdapter.MarketConfig.configOf(MARKET_ID).getCounterCurrency();
         createOrderRequest.ordertype = "Market";
         createOrderRequest.orderSide = "Bid";
+        createOrderRequest.clientRequestId = "mr-meeseeks";
 
         // Partial mock so we do not send stuff down the wire
         final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(
@@ -268,6 +269,7 @@ public class TestBtcMarketsExchangeAdapter {
         createOrderRequest.currency = BtcMarketsExchangeAdapter.MarketConfig.configOf(MARKET_ID).getCounterCurrency();
         createOrderRequest.ordertype = "Market";
         createOrderRequest.orderSide = "Ask";
+        createOrderRequest.clientRequestId = "mr-meeseeks";
 
         // Partial mock so we do not send stuff down the wire
         final BtcMarketsExchangeAdapter exchangeAdapter = PowerMock.createPartialMockAndInvokeDefaultConstructor(

@@ -17,6 +17,7 @@ import com.google.gson.stream.JsonToken;
 import com.google.gson.stream.JsonWriter;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.commons.codec.binary.Base64;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -26,9 +27,7 @@ import java.math.BigDecimal;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLEncoder;
-import java.security.InvalidKeyException;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
+import java.nio.charset.StandardCharsets;
 import java.text.NumberFormat;
 import java.time.Clock;
 import java.time.Instant;
@@ -56,7 +55,7 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
     /**
      * The public API URI.
      */
-    private static final String PUBLIC_API_BASE_URL = "https://api.btcmarkets.net/";
+    private static final String PUBLIC_API_BASE_URL = "https://api.btcmarkets.net";
 
     /**
      * Used for reporting unexpected errors.
@@ -104,11 +103,6 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
     private static final String ORDERS_SINCE_PROPERTY_NAME = "orders-since";
 
     /**
-     * Encryption algorithm used for signing requests
-     */
-    private static final String ALGORITHM = "HmacSHA512";
-
-    /**
      * Character set encoding
      */
     private static final String ENCODING = "UTF-8";
@@ -127,6 +121,11 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
      * Timestamp HTTP Header
      */
     private static final String TIMESTAMP_HEADER = "timestamp";
+
+    /**
+     * The clientRequestId is not currently used but must be specified. Any string is valid.
+     */
+    private static final String CLIENT_REQUEST_ID = "mr-meeseeks";
 
     /**
      * The numbers provided in the response for price and volume have been converted to an integer format. The conversion is 100000000, or 1E8.
@@ -187,21 +186,6 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
     private long ordersSince;
 
     /**
-     * Used to indicate if we have initialised the authentication and secure messaging layer.
-     */
-    private boolean initializedSecureMessagingLayer = false;
-
-    /**
-     * Base currency which is set in market configuration.
-     */
-    private String baseCurrency;
-
-    /**
-     * Counter currency value which is set in market configuration.
-     */
-    private String counterCurrency;
-
-    /**
      * The key used in the secure message.
      */
     private String key = "";
@@ -212,10 +196,9 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
     private String secret = "";
 
     /**
-     * The Message Digest generator used by the secure messaging layer.
-     * Used to create the hash of the entire message with the private key to ensure message integrity.
+     * The service for signing secure HTTP requests.
      */
-    private MessageDigest messageDigest;
+    private RequestSigningService signingService;
 
     /**
      * BTCMarkets API Methods
@@ -279,17 +262,17 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
     }
 
     enum MarketConfig {
-        BTC_AUD("btcaud"),
-        LTC_AUD("ltcaud"),
-        ETH_AUD("ethaud"),
-        ETC_AUD("etcaud"),
-        XRP_AUD("xrpaud"),
-        BCH_AUD("bchaud"),
-        LTC_BTC("ltcbtc"),
-        ETH_BTC("ethbtc"),
-        ETC_BTC("etcbtc"),
-        XRP_BTC("xrpbtc"),
-        BCH_BTC("bchbtc");
+        BTC_AUD("btc_aud"),
+        LTC_AUD("ltc_aud"),
+        ETH_AUD("eth_aud"),
+        ETC_AUD("etc_aud"),
+        XRP_AUD("xrp_aud"),
+        BCH_AUD("bch_aud"),
+        LTC_BTC("ltc_btc"),
+        ETH_BTC("eth_btc"),
+        ETC_BTC("etc_btc"),
+        XRP_BTC("xrp_btc"),
+        BCH_BTC("bch_btc");
 
         MarketConfig(String marketId) {
             this.marketId = marketId;
@@ -331,6 +314,10 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
         setOptionalConfig(config);
 
         initSecureMessageLayer();
+    }
+
+    private void initSecureMessageLayer() {
+        signingService = new RequestSigningService(secret);
     }
 
     @Override
@@ -474,6 +461,7 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
             createOrderRequest.instrument = marketConfig.getBaseCurrency();
             createOrderRequest.price = price;
             createOrderRequest.volume = quantity;
+            createOrderRequest.clientRequestId = CLIENT_REQUEST_ID;
 
             String apiMethod = api.getMethod(MarketConfig.configOf(marketId).getInstrument());
             final ExchangeHttpResponse response = sendPublicRequestToExchange(HttpMethod.POST, apiMethod, gson.toJson(createOrderRequest), null);
@@ -958,6 +946,50 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
     }
 
     // ------------------------------------------------------------------------------------------------
+    //  Signing Service Class
+    // ------------------------------------------------------------------------------------------------
+
+    private static class RequestSigningService {
+        private static final String ALGORITHM = "HmacSHA512";
+        private final String privateKey;
+
+        RequestSigningService(String privateKey) {
+            this.privateKey = privateKey;
+        }
+
+        String signRequest(String uri, String queryString, String postData, String timestamp) {
+            return signRequest(privateKey, buildStringToSign(uri, queryString, postData, timestamp));
+        }
+
+        private static String signRequest(String secret, String data) {
+            try {
+                Mac mac = Mac.getInstance(ALGORITHM);
+                SecretKeySpec secretSpec = new SecretKeySpec(Base64.decodeBase64(secret), ALGORITHM);
+                mac.init(secretSpec);
+                return Base64.encodeBase64String(mac.doFinal(data.getBytes()));
+            } catch (Exception e) {
+                final String errorMsg = UNEXPECTED_IO_ERROR_MSG;
+                LOG.error(errorMsg, e);
+            }
+            return "";
+        }
+
+        private static String buildStringToSign(String uri, String queryString, String postData, String timestamp) {
+            // queryString must be sorted key=value& pairs
+            StringBuilder stringToSign = new StringBuilder(uri + "\n");
+            if (queryString != null) {
+                stringToSign.append(queryString + "\n");
+            }
+            stringToSign.append(timestamp + "\n");
+            if (postData != null) {
+                stringToSign.append(postData);
+            }
+            LOG.debug(() -> "Signing request: " + stringToSign.toString());
+            return stringToSign.toString();
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------------
     //  Transport layer methods
     // ------------------------------------------------------------------------------------------------
 
@@ -1000,11 +1032,8 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
             //get the current timestamp. It's best to use ntp or similar services in order to sync your server time
             String timestamp = Long.toString(System.currentTimeMillis());
 
-            // create the string that needs to be signed
-            String stringToSign = buildStringToSign(apiMethod, queryString.toString(), postData, timestamp);
-
             // build signature to be included in the http header
-            String signature = signRequest(secret, stringToSign);
+            String signature = signingService.signRequest(apiMethod, null, postData, timestamp);
 
             requestHeaders.put("Accept", "*/*");
             requestHeaders.put("Content-Type", "application/json");
@@ -1022,49 +1051,6 @@ public class BtcMarketsExchangeAdapter extends AbstractExchangeAdapter implement
             final String errorMsg = UNEXPECTED_IO_ERROR_MSG;
             LOG.error(errorMsg, e);
             throw new TradingApiException(errorMsg, e);
-        }
-    }
-
-    private String buildStringToSign(String uri,
-                                     String queryString,
-                                     String postData,
-                                     String timestamp) {
-        // queryString must be sorted key=value& pairs
-        StringBuilder stringToSign = new StringBuilder();
-        stringToSign.append(uri).append("\n");
-        if (queryString != null) {
-            stringToSign.append(queryString).append("\n");
-        }
-        stringToSign.append(timestamp).append("\n");
-        stringToSign.append(postData);
-        return stringToSign.toString();
-    }
-
-    private String signRequest(String secret, String data) throws TradingApiException {
-        try {
-            Mac mac = Mac.getInstance(ALGORITHM);
-            SecretKeySpec secret_spec = new SecretKeySpec(Base64.getDecoder().decode(secret), ALGORITHM);
-            mac.init(secret_spec);
-            return Base64.getEncoder().encodeToString(mac.doFinal(data.getBytes()));
-        } catch (NoSuchAlgorithmException | InvalidKeyException e) {
-            throw new TradingApiException(e.getMessage(), e);
-        }
-    }
-
-    /**
-     * Initialises the secure messaging layer
-     * Sets up the Message Digest to safeguard the data we send to the exchange.
-     * We fail hard n fast if any of this stuff blows.
-     */
-    private void initSecureMessageLayer() {
-
-        try {
-            messageDigest = MessageDigest.getInstance("MD5");
-            initializedSecureMessagingLayer = true;
-        } catch (NoSuchAlgorithmException e) {
-            final String errorMsg = "Failed to setup MessageDigest for secure message layer. Details: " + e.getMessage();
-            LOG.error(errorMsg, e);
-            throw new IllegalStateException(errorMsg, e);
         }
     }
 
